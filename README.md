@@ -17,6 +17,12 @@ Designed for educational purposes, this tool helps students understand the execu
 
 ---
 
+## 📸 Screenshot
+
+![App Screenshot](screenshot/screen.jpg)
+
+---
+
 ## Example Programs
 
 Some included example programs:
