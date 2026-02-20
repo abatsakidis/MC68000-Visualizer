@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="el">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MC68000 Visualizer - Expanded</title>
+<style>
+body{
+    font-family:Segoe UI, sans-serif;
+    background:#1e1e2f;
+    color:white;
+    margin:0;
+    padding:20px;
+}
+h1{text-align:center;color:#f5f5f5;}
+.container{
+    max-width:1500px;
+    margin:auto;
+    display:flex;
+    gap:20px;
+}
+.left-panel{
+    flex:1;
+}
+.memory-output-wrapper{
+    display:flex;
+    gap:10px;
+}
+.memory-grid{
+    display:grid;
+    grid-template-columns:repeat(16,40px);
+    gap:3px;
+    margin-bottom:20px;
+}
+.memory-grid div{
+    background:#2e2e42;
+    text-align:center;
+    padding:8px;
+    border-radius:5px;
+    font-family:monospace;
+}
+.memory-grid .highlight-read{background:#74c0fc;}
+.memory-grid .highlight-write{background:#51cf66;}
+.registers{
+    display:flex;
+    flex-wrap:wrap;
+    gap:10px;
+    margin-bottom:10px;
+}
+.register{
+    background:#2e2e42;
+    padding:10px 15px;
+    border-radius:8px;
+    text-align:center;
+    min-width:70px;
+    font-family:monospace;
+}
+.register.highlight-reg{background:#f59f00!important;}
+button, select{
+    padding:8px 15px;
+    border:none;
+    border-radius:8px;
+    cursor:pointer;
+    margin:5px 2px;
+    background:#4e73df;
+    color:white;
+}
+.code-panel {
+    background:#2e2e42;
+    padding:10px;
+    border-radius:8px;
+    max-height:350px;
+    overflow-y:auto;
+    font-family:monospace;
+}
+.code-panel div{
+    padding:3px 5px;
+}
+.code-panel .highlight-instr{
+    background:#f59f00;
+    font-weight:bold;
+}
+.output-screen{
+    flex:0.7;
+    background:#000;
+    color:#0f0;
+    font-family:monospace;
+    padding:10px;
+    border-radius:8px;
+    max-height:320px;
+    overflow-y:auto;
+    white-space: pre-wrap;
+}
+.code-panel-wrapper {
+    display: flex;
+    flex-direction: column;
+    flex: 0.5;
+    gap: 8px; /* μικρή απόσταση μεταξύ codeDiv και info */
+}
+</style>
+</head>
+<body>
+
+<h1>MC68000 Visualizer</h1>
+<div class="container">
+<div class="left-panel">
+
+<h2>Registers</h2>
+<div class="registers" id="regDiv"></div>
+
+<div>
+<select id="programSelect">
+    <option value="0">Example 1: Basic MOVE/ADD</option>
+    <option value="1">Example 2: Loop Addition</option>
+    <option value="2">Example 3: Stack Operations</option>
+    <option value="3">Example 4: LEA Addressing</option>
+    <option value="4">Example 5: TRAP #15</option>
+    <option value="5">Example 6: Sum Array</option>
+    <option value="6">Example 7: LEA with Array Loop</option>
+    <option value="7">Example 8: TRAP Display Loop</option>
+    <option value="8">Example 9: Stack PUSH/POP</option>
+    <option value="9">Example 10: Memory Copy Loop</option>
+    <option value="10">Example 11: Sum Memory Loop</option>
+</select>
+<button id="loadExample">Load Program</button>
+<button id="stepBtn">Step</button>
+<button id="autoBtn">Auto Play</button>
+<button id="resetBtn">Reset</button>
+</div>
+
+<h2>Memory & Output</h2>
+<div class="memory-output-wrapper">
+    <div class="memory-grid" id="memDiv"></div>
+    <div class="output-screen" id="outputDiv"></div>
+</div>
+
+
+</div>
+
+<div class="code-panel-wrapper">
+    <div class="code-panel" id="codeDiv"></div>
+    <p id="info"></p>
+</div>
+</div>
+
+<script>
+
+const MEMORY_SIZE = 128;
+let memory = Array(MEMORY_SIZE).fill(0);
+let registers = {};
+let program = [];
+let PC = 0;
+let interval = null;
+let output = [];
+
+const memDiv = document.getElementById('memDiv');
+const regDiv = document.getElementById('regDiv');
+const codeDiv = document.getElementById('codeDiv');
+const infoP = document.getElementById('info');
+const programSelect = document.getElementById('programSelect');
+const outputDiv = document.getElementById('outputDiv');
+
+function initRegisters(){
+    registers = {
+        D0:5,D1:3,D2:2,D3:0,D4:0,D5:0,D6:0,D7:0,
+        A0:20,A1:40,A2:0,A3:0,A4:0,A5:0,A6:0,A7:MEMORY_SIZE-1
+    };
+}
+
+function drawMemory(){
+    memDiv.innerHTML="";
+    for(let i=0;i<MEMORY_SIZE;i++){
+        const cell=document.createElement('div');
+        cell.textContent=memory[i];
+        cell.id=`mem${i}`;
+        memDiv.appendChild(cell);
+    }
+}
+
+function drawRegisters(highlightRegs=[]){
+    regDiv.innerHTML="";
+    for(let i=0;i<8;i++){
+        const r=`D${i}`;
+        const cell=document.createElement('div');
+        cell.className='register';
+        if(highlightRegs.includes(r)) cell.classList.add('highlight-reg');
+        cell.textContent=`${r}: ${registers[r]}`;
+        regDiv.appendChild(cell);
+    }
+    for(let i=0;i<8;i++){
+        const r=`A${i}`;
+        const cell=document.createElement('div');
+        cell.className='register';
+        if(highlightRegs.includes(r)) cell.classList.add('highlight-reg');
+        cell.textContent=`${r}: ${registers[r]}`;
+        regDiv.appendChild(cell);
+    }
+}
+
+function drawCode(){
+    codeDiv.innerHTML="";
+    program.forEach((instr,i)=>{
+        const div = document.createElement('div');
+        div.id=`instr${i}`;
+        div.textContent=`${i}: ${instr.type} ${instr.args.join(', ')}`;
+        codeDiv.appendChild(div);
+    });
+}
+
+function drawOutput(){
+    outputDiv.textContent = output.join("\n");
+}
+
+function highlightInstruction(idx){
+    program.forEach((_,i)=>{
+        const el=document.getElementById(`instr${i}`);
+        if(el) el.classList.remove('highlight-instr');
+    });
+    if(idx<program.length){
+        const el=document.getElementById(`instr${idx}`);
+        if(el) el.classList.add('highlight-instr');
+    }
+}
+
+function step(){
+    if(PC>=program.length) return;
+
+    const instr = program[PC];
+    infoP.textContent = `Executing: ${instr.type} ${instr.args.join(', ')}`;
+
+    document.querySelectorAll('.memory-grid div').forEach(c=>{
+        c.classList.remove('highlight-read','highlight-write');
+    });
+
+    let affectedRegs=[];
+
+    switch(instr.type){
+
+        case 'MOVE':{
+            const [src,dst]=instr.args;
+            registers[dst]=registers[src];
+            affectedRegs.push(src,dst);
+            break;
+        }
+
+        case 'ADD':{
+            const [src,dst]=instr.args;
+            registers[dst]+=registers[src];
+            affectedRegs.push(src,dst);
+            break;
+        }
+
+        case 'SUB':{
+            const [src,dst]=instr.args;
+            registers[dst]-=registers[src];
+            affectedRegs.push(src,dst);
+            break;
+        }
+
+        case 'PUSH':{
+            const [reg]=instr.args;
+            memory[registers.A7]=registers[reg];
+            document.getElementById(`mem${registers.A7}`).classList.add('highlight-write');
+            registers.A7--;
+            affectedRegs.push(reg,'A7');
+            break;
+        }
+
+        case 'POP':{
+            const [reg]=instr.args;
+            registers.A7++;
+            registers[reg]=memory[registers.A7];
+            document.getElementById(`mem${registers.A7}`).classList.add('highlight-read');
+            affectedRegs.push(reg,'A7');
+            break;
+        }
+
+        case 'MOVE_MEM_REG':{
+            const [addrReg,dst]=instr.args;
+            const addr=registers[addrReg];
+            registers[dst]=memory[addr];
+            document.getElementById(`mem${addr}`).classList.add('highlight-read');
+            affectedRegs.push(addrReg,dst);
+            break;
+        }
+
+        case 'MOVE_REG_MEM':{
+            const [src,addrReg]=instr.args;
+            const addr=registers[addrReg];
+            memory[addr]=registers[src];
+            document.getElementById(`mem${addr}`).classList.add('highlight-write');
+            affectedRegs.push(src,addrReg);
+            break;
+        }
+
+        case 'ADD_IMM':{
+            const [val,dst]=instr.args;
+            registers[dst]+=val;
+            affectedRegs.push(dst);
+            break;
+        }
+
+        case 'SUB_IMM':{
+            const [val,dst]=instr.args;
+            registers[dst]-=val;
+            affectedRegs.push(dst);
+            break;
+        }
+
+        case 'BNE':{
+            const [addr]=instr.args;
+            if(registers.D1!==0){
+                PC=addr-1;
+            }
+            break;
+        }
+
+        case 'LEA':{
+            const [offset,base,dst]=instr.args;
+            registers[dst]=registers[base]+offset;
+            affectedRegs.push(dst);
+            break;
+        }
+
+        case 'TRAP':{
+            output.push(`TRAP #15 output: D0=${registers.D0}`);
+            drawOutput();
+            break;
+        }
+
+        case 'BRA':{
+            const [addr]=instr.args;
+            PC=addr-1;
+            break;
+        }
+    }
+
+    drawMemory();
+    drawRegisters(affectedRegs);
+    highlightInstruction(PC);
+    PC++;
+}
+
+function autoPlay(){
+    clearInterval(interval);
+    interval=setInterval(()=>{
+        if(PC>=program.length){clearInterval(interval);return;}
+        step();
+    },800);
+}
+
+const examplePrograms=[
+    [ {type:'MOVE', args:['D0','D1']},{type:'ADD', args:['D0','D1']},{type:'SUB', args:['D1','D0']},{type:'BRA', args:[0]} ],
+    [ {type:'MOVE', args:['D0','D2']},{type:'ADD', args:['D0','D2']},{type:'ADD', args:['D1','D2']},{type:'BRA', args:[1]} ],
+    [ {type:'MOVE', args:['D0','A0']},{type:'MOVE', args:['D1','A1']},{type:'ADD', args:['A0','D2']},{type:'SUB', args:['A1','D3']},{type:'BRA', args:[0]} ],
+    [ {type:'LEA', args:[10,'A0','A1']},{type:'MOVE', args:['D0','D1']},{type:'ADD', args:['A1','D1']},{type:'BRA', args:[0]} ],
+    [ {type:'MOVE', args:['D0','D1']},{type:'TRAP', args:[15]},{type:'ADD', args:['D1','D0']},{type:'BRA', args:[0]} ],
+    [ {type:'MOVE', args:['D0','D1']},{type:'MOVE', args:['D2','D3']},{type:'ADD', args:['D1','D3']},{type:'ADD', args:['D0','D3']},{type:'SUB', args:['D2','D1']},{type:'TRAP', args:[15]},{type:'BRA', args:[0]} ],
+    [ {type:'LEA', args:[0,'A0','A1']},{type:'MOVE', args:['D0','D1']},{type:'ADD', args:['D1','D2']},{type:'ADD', args:['A1','D2']},{type:'TRAP', args:[15]},{type:'BRA', args:[0]} ],
+    [ {type:'MOVE', args:['D0','D1']},{type:'TRAP', args:[15]},{type:'ADD', args:['D0','D1']},{type:'TRAP', args:[15]},{type:'SUB', args:['D1','D0']},{type:'TRAP', args:[15]},{type:'BRA', args:[0]} ],
+    [ {type:'PUSH', args:['D0']},{type:'PUSH', args:['D1']},{type:'POP', args:['D2']},{type:'POP', args:['D3']},{type:'TRAP', args:[15]} ],
+    [ {type:'MOVE_MEM_REG', args:['A0','D0']},{type:'MOVE_REG_MEM', args:['D0','A1']},{type:'ADD_IMM', args:[1,'A0']},{type:'ADD_IMM', args:[1,'A1']},{type:'SUB_IMM', args:[1,'D1']},{type:'BNE', args:[0]},{type:'TRAP', args:[15]} ],
+    [ {type:'MOVE_MEM_REG', args:['A0','D2']},{type:'ADD', args:['D2','D0']},{type:'ADD_IMM', args:[1,'A0']},{type:'SUB_IMM', args:[1,'D1']},{type:'BNE', args:[0]},{type:'TRAP', args:[15]} ]
+];
+
+document.getElementById('loadExample').onclick=()=>{
+    const sel=parseInt(programSelect.value);
+    program=examplePrograms[sel];
+    PC=0;
+    memory.fill(0);
+    initRegisters();
+    output=[];
+    drawMemory();
+    drawRegisters();
+    drawCode();
+    drawOutput();
+    highlightInstruction(PC);
+    infoP.textContent='Program loaded';
+};
+
+document.getElementById('stepBtn').onclick=step;
+document.getElementById('autoBtn').onclick=autoPlay;
+document.getElementById('resetBtn').onclick=()=>{
+    PC=0;
+    memory.fill(0);
+    initRegisters();
+    output=[];
+    drawMemory();
+    drawRegisters();
+    drawCode();
+    drawOutput();
+    highlightInstruction(PC);
+    infoP.textContent='Reset';
+};
+
+initRegisters();
+drawMemory();
+drawRegisters();
+drawCode();
+drawOutput();
+
+</script>
+</body>
+</html>
